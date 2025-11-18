@@ -20,7 +20,7 @@ type Link = {
   value?: number
 }
 
-export default function GraphViewer({ useSample, apiUrl }: { useSample: boolean; apiUrl: string }) {
+export default function GraphViewer({ useSample, apiUrl, setApiUrl }: { useSample: boolean; apiUrl: string; setApiUrl?: (url: string) => void }) {
   const fgRef = useRef<ForceGraphMethods>()
 
   const { data, isLoading, error } = useQuery(['graph', apiUrl, useSample], async () => {
@@ -28,8 +28,30 @@ export default function GraphViewer({ useSample, apiUrl }: { useSample: boolean;
       const res = await import('../data/train-ticket.json')
       return res.default
     }
-    const res = await axios.get(apiUrl, { params: { startsWithPublic: true, endsInSink: true, hasVulnerability: true } })
-    return res.data
+    // Try primary URL, but some backend setups add a global 'api' prefix resulting in '/api/api/graph/query'
+    try {
+      const res = await axios.get(apiUrl, { params: { startsWithPublic: true, endsInSink: true, hasVulnerability: true } })
+      return res.data
+    } catch (err: any) {
+      // If 404, try the alternate double-api path
+      if (err?.response?.status === 404) {
+        const alt = apiUrl.includes('/api/api/graph/query')
+          ? apiUrl.replace('/api/api/graph/query', '/api/graph/query')
+          : apiUrl.replace('/api/graph/query', '/api/api/graph/query')
+
+        try {
+          const res2 = await axios.get(alt, { params: { startsWithPublic: true, endsInSink: true, hasVulnerability: true } })
+          // update controls API URL to the working endpoint so future requests use it
+          // update parent state if callback provided so UI reflects the working URL
+          if (setApiUrl) setApiUrl(alt)
+          return res2.data
+        } catch (err2: any) {
+          // rethrow original error or the alternate error
+          throw err2 || err
+        }
+      }
+      throw err
+    }
   }, { staleTime: 1000 * 60 * 5 })
 
   const graph = useMemo(() => {
