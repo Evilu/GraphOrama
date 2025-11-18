@@ -4,33 +4,20 @@ import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
 import * as THREE from 'three'
 
-type Node = {
-  id: string
-  name?: string
-  group?: string
-  isPublic?: boolean
-  isSink?: boolean
-  hasVulnerability?: boolean
-  vulnerabilities?: any[]
-}
-
-type Link = {
-  source: string
-  target: string
-  value?: number
-}
-
-export default function GraphViewer({ useSample, apiUrl, setApiUrl }: { useSample: boolean; apiUrl: string; setApiUrl?: (url: string) => void }) {
+export default function GraphViewer({ apiUrl, setApiUrl, filter, uploadStamp }: { apiUrl: string; setApiUrl?: (url: string) => void; filter: string; uploadStamp?: number | null }) {
   const fgRef = useRef<ForceGraphMethods>()
 
-  const { data, isLoading, error } = useQuery(['graph', apiUrl, useSample], async () => {
-    if (useSample) {
-      const res = await import('../data/train-ticket.json')
-      return res.default
-    }
+  // include uploadStamp in the query key so uploads trigger a refetch
+  const { data, isLoading, error } = useQuery(['graph', apiUrl, filter, uploadStamp], async () => {
+    if (!apiUrl) return { nodes: [], links: [] }
     // Try primary URL, but some backend setups add a global 'api' prefix resulting in '/api/api/graph/query'
     try {
-      const res = await axios.get(apiUrl, { params: { startsWithPublic: true, endsInSink: true, hasVulnerability: true } })
+      const params: any = {}
+      if (filter === 'startsWithPublic') params.startsWithPublic = true
+      if (filter === 'endsInSink') params.endsInSink = true
+      if (filter === 'hasVulnerability') params.hasVulnerability = true
+
+      const res = await axios.get(apiUrl, { params })
       return res.data
     } catch (err: any) {
       // If 404, try the alternate double-api path
@@ -40,7 +27,12 @@ export default function GraphViewer({ useSample, apiUrl, setApiUrl }: { useSampl
           : apiUrl.replace('/api/graph/query', '/api/api/graph/query')
 
         try {
-          const res2 = await axios.get(alt, { params: { startsWithPublic: true, endsInSink: true, hasVulnerability: true } })
+          const params: any = {}
+          if (filter === 'startsWithPublic') params.startsWithPublic = true
+          if (filter === 'endsInSink') params.endsInSink = true
+          if (filter === 'hasVulnerability') params.hasVulnerability = true
+
+          const res2 = await axios.get(alt, { params })
           // update controls API URL to the working endpoint so future requests use it
           // update parent state if callback provided so UI reflects the working URL
           if (setApiUrl) setApiUrl(alt)
@@ -57,7 +49,7 @@ export default function GraphViewer({ useSample, apiUrl, setApiUrl }: { useSampl
   const graph = useMemo(() => {
     if (!data) return { nodes: [], links: [] }
 
-    // if sample JSON structure has nodes & edges
+    // if JSON structure has nodes & edges
     if (data.nodes && data.edges) {
       // Build node map to quickly detect missing nodes referenced by edges
       const nodeMap = new Map<string, any>()
@@ -116,15 +108,14 @@ export default function GraphViewer({ useSample, apiUrl, setApiUrl }: { useSampl
       ref={fgRef as any}
       graphData={graph as any}
       nodeAutoColorBy={(n: any) => (n.group || n.id)}
-      nodeLabel={(n: any) => `${n.id}\nPublic: ${n.isPublic}\nSink: ${n.isSink}\nVulns: ${n.hasVulnerability}`}
+      nodeLabel={(n: any) => `${n.id}\nPublic: ${String(n.isPublic)}\nSink: ${String(n.isSink)}\nVulns: ${String(n.hasVulnerability)}`}
       linkDirectionalParticles={2}
-      linkDirectionalParticleWidth={(l: any) => 1}
+      linkDirectionalParticleWidth={() => 1}
       linkDirectionalParticleColor={() => '#ff4500'}
       nodeThreeObject={(node: any) => {
         // create a sphere with color based on vulnerability/public
         const color = node.hasVulnerability ? 'red' : node.isPublic ? 'green' : '#888'
-        const sprite = new THREE.Mesh(new THREE.SphereGeometry(4), new THREE.MeshBasicMaterial({ color }))
-        return sprite
+        return new THREE.Mesh(new THREE.SphereGeometry(4), new THREE.MeshBasicMaterial({ color }))
       }}
       onNodeClick={(node: any) => {
         // center on node

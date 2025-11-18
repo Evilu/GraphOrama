@@ -3,24 +3,25 @@ import GraphViewer from './components/GraphViewer'
 import Controls from './components/Controls'
 
 export default function App() {
-  const [useSample, setUseSample] = useState(true)
   const [apiUrl, setApiUrl] = useState('/api/graph/query')
+  const [filter, setFilter] = useState<'none' | 'startsWithPublic' | 'endsInSink' | 'hasVulnerability'>('none')
+  const [uploadStamp, setUploadStamp] = useState<number | null>(null)
 
   return (
     <div className="app">
       <aside className="sidebar">
         <h1>GraphOrama</h1>
         <Controls
-          useSample={useSample}
-          setUseSample={setUseSample}
           apiUrl={apiUrl}
           setApiUrl={setApiUrl}
+          filter={filter}
+          setFilter={setFilter}
+          setUploadStamp={setUploadStamp}
         />
       </aside>
       <main className="main">
-        <GraphViewer useSample={useSample} apiUrl={apiUrl} />
+        <GraphViewer apiUrl={apiUrl} filter={filter} setApiUrl={setApiUrl} uploadStamp={uploadStamp} />
       </main>
     </div>
   )
 }
-

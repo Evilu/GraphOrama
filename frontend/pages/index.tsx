@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react'
+import * as React from 'react'
 import dynamic from 'next/dynamic'
 import Controls from '../src/components/Controls'
-import type { NextPage } from 'next'
+// import type { NextPage } from 'next' (unused)
 
 const GraphViewer = dynamic(() => import('../src/components/GraphViewer'), { ssr: false })
 
@@ -11,10 +11,14 @@ export default function Home() {
   // so the effective route becomes '/api/api/graph/query'. Prefer that by default to avoid 404s.
   const defaultApiCandidate1 = `${defaultBase.replace(/\/$/, '')}/api/api/graph/query`
   const defaultApiCandidate2 = `${defaultBase.replace(/\/$/, '')}/api/graph/query`
-  const [useSample, setUseSample] = useState(true)
-  const [apiUrl, setApiUrl] = useState(defaultApiCandidate1)
+  const [apiUrl, setApiUrl] = React.useState(defaultApiCandidate1)
+  // Add filter state so Controls has a proper setter and GraphViewer receives it
+  const [filter, setFilter] = React.useState<'none' | 'startsWithPublic' | 'endsInSink' | 'hasVulnerability'>('none')
+  // uploadStamp changes when user uploads new graph; it's included in GraphViewer query key to force refetch
+  const [uploadStamp, setUploadStamp] = React.useState<number | null>(null)
+
   // On mount, probe the backend to find which endpoint works and set apiUrl accordingly
-  useEffect(() => {
+  React.useEffect(() => {
     let mounted = true
     async function probe() {
       // Try candidate1 first (double-api), then candidate2
@@ -47,14 +51,16 @@ export default function Home() {
       <aside className="sidebar">
         <h1>GraphOrama</h1>
         <Controls
-          useSample={useSample}
-          setUseSample={setUseSample}
           apiUrl={apiUrl}
           setApiUrl={setApiUrl}
+          filter={filter}
+          setFilter={setFilter}
+          // allow Controls to notify the page when a new graph was uploaded so GraphViewer will refetch
+          setUploadStamp={setUploadStamp}
         />
       </aside>
       <main className="main">
-        <GraphViewer useSample={useSample} apiUrl={apiUrl} setApiUrl={setApiUrl} />
+        <GraphViewer apiUrl={apiUrl} setApiUrl={setApiUrl} filter={filter} uploadStamp={uploadStamp} />
       </main>
     </div>
   )
