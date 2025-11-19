@@ -9,14 +9,13 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
         this.client = new Redis(redisUrl, {
-            retryStrategy: (times) => {
-                if (times > 3) {
-                    console.warn('Redis connection failed after 3 retries, running without Redis cache');
-                    return null;
-                }
-                return Math.min(times * 50, 2000);
-            },
-            maxRetriesPerRequest: 3,
+            // Retry with increasing delay for a long time while Redis is coming up.
+            // Returning a number schedules next retry; do not return null here so client keeps retrying.
+            retryStrategy: (times) => Math.min(100 * times, 2000),
+            // Allow many retries per request so transient failures during startup don't abort operations.
+            maxRetriesPerRequest: 50,
+            // Try to reconnect on errors rather than giving up immediately
+            enableOfflineQueue: true,
         });
 
         this.client.on('error', (err) => {
@@ -25,6 +24,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
         this.client.on('connect', () => {
             console.log('Redis client connected');
+        });
+        this.client.on('ready', () => {
+            console.log('Redis client ready');
         });
     }
 
@@ -45,4 +47,3 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
         }
     }
 }
-

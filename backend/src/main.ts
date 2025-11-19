@@ -18,12 +18,33 @@ async function bootstrap() {
     // Enable compression
     app.use(compression());
 
-    // Enable CORS for React frontend
+    // Configure CORS: allow the browser (http://localhost:3000) and the internal Docker frontend (http://frontend:3000).
+    // Allow requests with no origin (e.g. curl, server-to-server) by returning true for undefined origin.
     app.enableCors({
-        origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+        origin: (origin, callback) => {
+            // allow server-to-server or curl requests
+            if (!origin) return callback(null, true);
+
+            // allow localhost variants (http://localhost:3000, http://127.0.0.1:3000, etc.)
+            try {
+                const u = new URL(origin);
+                if ((u.hostname === 'localhost' || u.hostname === '127.0.0.1') && /^https?:$/.test(u.protocol)) {
+                    return callback(null, true);
+                }
+            } catch (e) {
+                // If parsing fails, fall through to check exact matches
+            }
+
+            // allow explicitly configured frontend URL or internal docker hostname
+            const explicit = process.env.FRONTEND_URL || 'http://localhost:3000';
+            if (origin === explicit || origin === 'http://frontend:3000') return callback(null, true);
+
+            return callback(null, false);
+        },
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+        optionsSuccessStatus: 200,
     });
 
     // Global validation pipe
