@@ -13,7 +13,7 @@ import {
     MaxFileSizeValidator,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { GraphService } from './graph.service';
 import { GraphData } from './interfaces/graph.interfaces';
 import { FilterOptions, GraphResponse } from './interfaces/filter.interfaces';
