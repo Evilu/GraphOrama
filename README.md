@@ -1,6 +1,7 @@
 # GraphOrama 🚀
 
-A high-performance microservices graph visualization platform with Redis-backed storage and advanced security path analysis.
+A high-performance microservices graph visualization platform with Redis-backed storage and advanced security path
+analysis.
 
 ## 🎯 Features
 
@@ -14,21 +15,21 @@ A high-performance microservices graph visualization platform with Redis-backed 
 
 ```
 ┌─────────────────────────────────────────────────┐
-│              React Frontend (3D)                 │
+│              React Frontend (3D)                │
 │  • Interactive graph visualization              │
 │  • Real-time filtering                          │
 │  • File upload support                          │
 └──────────────────┬──────────────────────────────┘
                    │ HTTP/REST
 ┌──────────────────▼──────────────────────────────┐
-│           NestJS Backend API                     │
+│           NestJS Backend API                    │
 │  • O(1) graph queries                           │
 │  • Pre-computed reachability                    │
 │  • Generic metadata filtering                   │
 └──────────────────┬──────────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────────┐
-│         Redis (Primary Storage)                  │
+│         Redis (Primary Storage)                 │
 │  • Graph nodes (Hashes)                         │
 │  • Edges & reachability (Sets)                  │
 │  • Metadata indexes                             │
@@ -62,11 +63,13 @@ npm install
 ### Running the Application
 
 #### 1. Start Redis (Optional)
+
 ```bash
 redis-server
 ```
 
 #### 2. Start Backend
+
 ```bash
 cd backend
 npm run start:dev
@@ -74,6 +77,7 @@ npm run start:dev
 ```
 
 #### 3. Start Frontend
+
 ```bash
 cd frontend
 npm run dev
@@ -95,11 +99,13 @@ curl -X POST http://localhost:3001/api/graph/load \
 ### Swagger UI
 
 Interactive API documentation is available at:
+
 ```
 http://localhost:3001/api
 ```
 
 The Swagger UI provides:
+
 - Complete API endpoint documentation
 - Request/response schemas
 - Interactive testing interface
@@ -107,15 +113,16 @@ The Swagger UI provides:
 
 ### Core Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/graph/load` | Load graph data |
-| `GET` | `/api/graph/query` | Query graph with filters |
-| `GET` | `/api/graph/statistics` | Get graph statistics |
+| Method | Endpoint                | Description              |
+|--------|-------------------------|--------------------------|
+| `POST` | `/api/graph/load`       | Load graph data          |
+| `GET`  | `/api/graph/query`      | Query graph with filters |
+| `GET`  | `/api/graph/statistics` | Get graph statistics     |
 
 ### Filter Examples
 
 #### Built-in Filters
+
 ```bash
 # Public nodes
 GET /api/graph/query?startsWithPublic=true
@@ -131,6 +138,7 @@ GET /api/graph/query?startsWithPublic=true&endsInSink=true
 ```
 
 #### Metadata Filters (Generic)
+
 ```bash
 # Filter by cloud provider
 GET /api/graph/query?metadataFilters={"cloud":"AWS"}
@@ -147,8 +155,8 @@ GET /api/graph/query?metadataFilters={"cloud":"AWS","engine":"postgres"}
 
 ## 🔒 Security Features
 
-
 ### Security Headers
+
 - Helmet.js for security headers
 - Rate limiting with @nestjs/throttler
 - Input validation with class-validator
@@ -168,6 +176,7 @@ npm run test:cov
 ## 📊 Data Format
 
 ### Input Format
+
 ```json
 {
   "nodes": [
@@ -201,6 +210,7 @@ npm run test:cov
 ```
 
 ### Output Format (3D Graph Compatible)
+
 ```json
 {
   "nodes": [
@@ -235,10 +245,10 @@ npm run test:cov
 ## 🎨 Frontend Features
 
 - **3D Force Graph**: WebGL-based interactive visualization
-- **Node Coloring**: 
-  - 🔴 Red: Vulnerable nodes
-  - 🟢 Green: Public-exposed nodes
-  - ⚫ Gray: Internal nodes
+- **Node Coloring**:
+    - 🔴 Red: Vulnerable nodes
+    - 🟢 Green: Public-exposed nodes
+    - ⚫ Gray: Internal nodes
 - **Interactive Controls**: Click nodes to focus, drag to rotate
 - **Real-time Filtering**: Instant graph updates on filter changes
 - **File Upload**: Drag-and-drop or paste JSON data
@@ -246,6 +256,7 @@ npm run test:cov
 ## 🔧 Configuration
 
 ### Backend (.env)
+
 ```bash
 PORT=3001
 REDIS_HOST=localhost
@@ -253,6 +264,7 @@ REDIS_PORT=6379
 ```
 
 ### Frontend
+
 The frontend automatically detects the backend URL and handles both `/api/graph` and `/api/api/graph` paths.
 
 ## 📈 Performance
@@ -263,18 +275,91 @@ The frontend automatically detects the backend URL and handles both `/api/graph`
 - **Graph Loading**: O(n + e) initial processing, then O(1) queries
 - **Metadata Indexing**: Automatic indexing of all metadata for dynamic filtering
 
-## 🚢 Production Deployment
+## 🐳 Docker Deployment
 
-1. Set environment variables
-2. Configure Redis (recommended for production)
-3. Build the application:
-   ```bash
-   cd backend && npm run build
-   cd ../frontend && npm run build
-   ```
-4. Use a process manager (PM2, systemd)
-5. Configure reverse proxy (nginx, caddy)
-6. Enable monitoring (Prometheus, Grafana)
+The recommended way to run GraphOrama is using Docker Compose, which orchestrates Redis, backend, and frontend services.
+
+### Prerequisites
+
+- Docker 20.10+
+- Docker Compose 2.0+
+
+### Quick Start with Docker
+
+```bash
+# From project root
+docker compose up --build -d
+```
+
+The application will be available at:
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:3001
+- **Swagger UI**: http://localhost:3001/api
+
+### Docker Services
+
+The Docker Compose setup includes three services:
+
+| Service    | Container Name        | Exposed Port | Description                    |
+|------------|-----------------------|--------------|--------------------------------|
+| `redis`    | graphorama-redis      | 6379         | Redis data store               |
+| `backend`  | graphorama-backend    | 3001         | NestJS API server              |
+| `frontend` | graphorama-frontend   | 3000         | Next.js web application        |
+
+### Environment Variables
+
+The Docker Compose configuration automatically sets:
+
+**Backend:**
+- `NODE_ENV=production`
+- `REDIS_URL=redis://redis:6379`
+- `FRONTEND_URL=http://frontend:3000`
+
+**Frontend:**
+- `NODE_ENV=production`
+- `NEXT_PUBLIC_API_URL=http://backend:3001`
+
+### Docker Commands
+
+```bash
+# Start all services
+docker compose up -d
+
+# Build and start (after code changes)
+docker compose up --build -d
+
+# View logs
+docker compose logs -f frontend
+docker compose logs -f backend
+docker compose logs -f redis
+
+# Stop services
+docker compose down
+
+# Stop and remove volumes (clean state)
+docker compose down -v
+
+# Restart a specific service
+docker compose restart backend
+```
+
+### Volumes and Persistence
+
+Redis data is persisted in a named volume:
+- **Volume**: `graphorama-redis-data`
+- **Mount**: `/data` inside the Redis container
+
+To backup Redis data:
+```bash
+docker compose exec redis redis-cli SAVE
+docker cp graphorama-redis:/data/dump.rdb ./backup/
+```
+
+### Networking
+
+All services communicate over an internal Docker bridge network named `internal`. The frontend and backend are exposed to the host on ports 3000 and 3001 respectively.
+
+
 
 ## 📖 Documentation
 
@@ -285,6 +370,7 @@ The frontend automatically detects the backend URL and handles both `/api/graph`
 ## 🤝 Contributing
 
 This is a production-ready implementation with:
+
 - ✅ Comprehensive test coverage
 - ✅ Security best practices
 - ✅ Performance optimizations
@@ -296,4 +382,4 @@ MIT
 
 ---
 
-**Built with**: NestJS, React, TypeScript, Redis, react-force-graph-3d
+**Built with**: NestJS,NextJS, React, TypeScript, Redis, react-force-graph-3d
