@@ -4,30 +4,40 @@ A high-performance, production-ready NestJS API for querying and visualizing mic
 
 ## 🚀 Features
 
-- **O(1) Lookups**: Pre-computed indexes and hash maps for instant access
+- **Redis-Powered Storage**: Primary storage with automatic fallback to in-memory
+- **O(1) Lookups**: Pre-computed indexes and Redis Sets for instant access
+- **Metadata Filtering**: Generic filtering by any metadata key-value pair
 - **Non-blocking Operations**: Async processing with event loop yielding
 - **No While Loops**: Recursive implementations to prevent blocking
 - **3D Force Graph Ready**: Output formatted for direct use with react-force-graph-3d
-- **Advanced Filtering**: Built-in filters with extensible custom filter support
+- **Advanced Filtering**: Built-in filters with secure metadata-based filtering
 - **Memory Efficient**: Chunked processing and lazy evaluation
 - **Production Ready**: Rate limiting, compression, security headers, validation
 
 ## 📊 Performance Characteristics
 
-- **Node Lookup**: O(1) using Map data structure
-- **Edge Traversal**: O(1) for adjacency list access
-- **Filter Application**: O(1) for pre-computed path lookups
-- **Graph Loading**: O(n + e) preprocessing, then O(1) queries
-- **Memory Usage**: Optimized with chunked processing
+- **Node Lookup**: O(1) using Redis Hashes or in-memory Maps
+- **Edge Traversal**: O(1) via Redis Sets for adjacency lists
+- **Filter Application**: O(1) using Redis SUNION on pre-computed reachability sets
+- **Graph Loading**: O(n + e) preprocessing with Redis pipeline, then O(1) queries
+- **Memory Usage**: Optimized with Redis storage and chunked processing
+- **Metadata Indexing**: Automatic indexing of all metadata for dynamic filtering
 
 ## 🏗️ Architecture Decisions
 
+### Storage Layer
+
+1. **Redis Primary Storage**: High-performance distributed storage with persistence
+2. **Automatic Fallback**: Graceful degradation to in-memory storage if Redis unavailable
+3. **Pipeline Operations**: Batch Redis operations for efficient loading
+4. **Reachability Cache**: Pre-computed paths stored in Redis Sets
+
 ### Data Structures
 
-1. **Maps over Objects**: Using JavaScript Maps for true O(1) performance
-2. **Sets for Collections**: Preventing duplicates with O(1) add/has operations
-3. **Pre-computed Paths**: Trading initial computation for query speed
-4. **Indexed Collections**: Separate indexes for public, sink, and vulnerable nodes
+1. **Redis Hashes**: Node data stored as `graph:node:{name}`
+2. **Redis Sets**: Edges, indexes, and reachability stored as Sets for O(1) SUNION
+3. **Metadata Indexing**: Automatic indexing of all metadata key-value pairs
+4. **In-Memory Maps**: Fallback using JavaScript Maps for true O(1) performance
 
 ### Non-blocking Design
 
@@ -38,8 +48,9 @@ A high-performance, production-ready NestJS API for querying and visualizing mic
 
 ### Filtering Strategy
 
-- **Pre-computation**: Routes computed at load time, not query time
-- **Index-based Filtering**: Using pre-built indexes for instant filtering
+- **Pre-computation**: Reachability computed at load time, not query time
+- **Index-based Filtering**: Using Redis Sets for instant filtering
+- **Metadata Filters**: Generic filtering by any metadata attribute
 - **Composable Filters**: Filters can be combined without re-traversal
 
 ## 🔧 Installation
@@ -67,31 +78,52 @@ Content-Type: application/json
 }
 
 ### Query Graph with Filters
+```bash
 GET /api/graph/query?startsWithPublic=true&endsInSink=true&hasVulnerability=true
 
+# With metadata filters
+GET /api/graph/query?metadataFilters={"cloud":"AWS"}
+GET /api/graph/query?metadataFilters={"engine":"postgres"}
+GET /api/graph/query?metadataFilters={"cwe":"CWE-22"}
+```
+
 ### Get Statistics
+```bash
 GET /api/graph/statistics
-
-### Custom Filters
-POST /api/graph/query/custom
-Content-Type: application/json
-
-{
-"startsWithPublic": true,
-"endsInSink": true,
-"hasVulnerability": false,
-"customFilters": [
-"route.path.length > 3",
-"route.path.includes('order-service')"
-]
-}
+```
 
 ## 🔍 Filter Types
 
 1. **startsWithPublic**: Routes originating from public-exposed services
 2. **endsInSink**: Routes terminating at databases or queues
 3. **hasVulnerability**: Routes containing vulnerable nodes
-4. **customFilters**: Extensible function-based filtering
+4. **metadataFilters**: Generic filtering by any metadata key-value pair
+
+### Metadata Filters (Secure & Generic)
+
+Metadata filters allow you to filter by any attribute in node metadata without writing code:
+
+```json
+// Filter by cloud provider
+{"cloud": "AWS"}
+
+// Filter by database engine
+{"engine": "postgres"}
+
+// Filter by vulnerability CWE
+{"cwe": "CWE-22"}
+
+// Filter by any custom metadata
+{"team": "payment-team", "env": "production"}
+```
+
+**How it works:**
+- All metadata is automatically indexed in Redis during graph loading
+- Supports both top-level node metadata and nested vulnerability metadata
+- Returns the full subgraph context (reachability) for matching nodes
+- Secure: No code execution, unlike the deprecated `customFilters`
+
+**Security Note:** The previous `customFilters` feature has been removed due to RCE vulnerability (used `new Function()`). Metadata filters provide the same flexibility without security risks.
 
 ## 📊 Response Format (3D Force Graph Compatible)
 
@@ -166,18 +198,21 @@ npm run test:cov
 ## 📈 Scalability Considerations
 
 1. **Horizontal Scaling**: Stateless design allows multiple instances
-2. **Caching Layer**: Can add Redis for distributed caching
+2. **Redis Storage**: Distributed graph storage for large datasets
 3. **Load Balancing**: Ready for reverse proxy deployment
-4. **Database Integration**: Can persist pre-computed paths
+4. **Persistence**: Redis provides data persistence across restarts
 5. **Streaming**: Can implement streaming for very large graphs
+6. **Redis Clustering**: Can scale Redis for high availability
 
 ## 🚀 Production Deployment
 
 1. Set environment variables from `.env.example`
-2. Build the application: `npm run build`
-3. Use process manager (PM2, systemd)
-4. Configure reverse proxy (nginx, caddy)
-5. Enable monitoring (Prometheus, Grafana)
+2. **Configure Redis**: Set `REDIS_HOST` and `REDIS_PORT` (defaults to localhost:6379)
+3. Build the application: `npm run build`
+4. Use process manager (PM2, systemd)
+5. Configure reverse proxy (nginx, caddy)
+6. Enable monitoring (Prometheus, Grafana)
+7. **Redis Monitoring**: Monitor Redis memory usage and connection health
 
 ## 📝 License
 

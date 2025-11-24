@@ -29,13 +29,22 @@ Based on the provided assignment instructions, this system implements:
 │  │ • GET /query    │    │   Paths             │  │
 │  │ • GET /stats    │    │ • Non-blocking      │  │
 │  └─────────────────┘    │   Operations        │  │
-│                         └─────────────────────┘  │
-├─────────────────────────────────────────────────┤
-│               Data Structures                    │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ │
-│  │ Nodes Map   │ │ Adjacency   │ │ Path Cache  │ │
-│  │ (O(1))      │ │ Lists       │ │ (O(1))      │ │
-│  └─────────────┘ └─────────────┘ └─────────────┘ │
+│                         └──────────┬────────────┘  │
+├────────────────────────────────────┼──────────────┤
+│               Storage Layer        │              │
+│  ┌─────────────────────────────────▼────────────┐ │
+│  │         Redis (Primary Storage)              │ │
+│  │  • Graph nodes (Hashes)                      │ │
+│  │  • Edges (Sets)                              │ │
+│  │  • Reachability cache (Sets)                 │ │
+│  │  • Metadata indexes (Sets)                   │ │
+│  │  • O(1) lookups via SUNION                   │ │
+│  └──────────────────────────────────────────────┘ │
+│  ┌──────────────────────────────────────────────┐ │
+│  │      In-Memory Fallback (when Redis down)   │ │
+│  │  • Maps for nodes/edges                      │ │
+│  │  • Sets for indexes                          │ │
+│  └──────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -62,44 +71,59 @@ Based on the provided assignment instructions, this system implements:
 
 ## 🔄 Data Flow Analysis
 
-### 1. Data Loading Flow
+### 1. Data Loading Flow (Redis)
 
 ```mermaid
 sequenceDiagram
     participant Client
     participant Controller
     participant Service
-    participant DataStructures
+    participant Redis
 
     Client->>Controller: POST /api/graph/load (JSON)
     Controller->>Service: loadGraph(graphData)
-    Service->>Service: initializeEmptyGraph()
-    Service->>DataStructures: Clear all maps/sets
-    Service->>Service: preprocessGraphAsync()
-    Service->>Service: processNodeChunk() (batched)
-    Service->>DataStructures: Store nodes in Maps
-    Service->>Service: processEdgeChunk() (batched)
-    Service->>DataStructures: Build adjacency lists
-    Service->>Service: precomputePathsAsync()
-    Service->>DataStructures: Cache computed paths
+    Service->>Redis: Check connection
+    alt Redis Available
+        Service->>Service: loadGraphRedis()
+        Service->>Redis: Pipeline: DEL graph:*
+        Service->>Redis: Pipeline: HSET graph:node:*
+        Service->>Redis: Pipeline: SADD graph:nodes:*
+        Service->>Redis: Pipeline: SADD graph:edges:*
+        Service->>Redis: Pipeline: SADD graph:nodes:meta:*
+        Service->>Redis: EXEC pipeline
+        Service->>Service: computeReachableSetsRedis()
+        Service->>Redis: BFS + SADD graph:reachable:*
+    else Redis Unavailable
+        Service->>Service: loadGraphMemory()
+        Service->>Service: Build in-memory structures
+    end
     Service->>Controller: Success + statistics
     Controller->>Client: Response with stats
 ```
 
-### 2. Query Processing Flow
+### 2. Query Processing Flow (Redis)
 
 ```mermaid
 sequenceDiagram
     participant Frontend
     participant Controller
     participant Service
-    participant Cache
+    participant Redis
 
     Frontend->>Controller: GET /api/graph/query?filters
     Controller->>Service: getFilteredGraph(filters)
-    Service->>Cache: Lookup precomputed paths (O(1))
-    Cache->>Service: Return cached routes
-    Service->>Service: applyFilters() (if needed)
+    alt Redis Available
+        Service->>Service: getFilteredGraphRedis()
+        Service->>Redis: Collect filter keys
+        Note over Service,Redis: startsWithPublic → graph:reachable:public:*<br/>endsInSink → graph:reachable:sink:*<br/>hasVulnerability → graph:reachable:vulnerable:*<br/>metadataFilters → graph:reachable:meta:*
+        Service->>Redis: SUNION [filter keys]
+        Redis->>Service: Return node IDs (O(1))
+        Service->>Redis: HGETALL graph:node:* (batch)
+        Service->>Redis: SMEMBERS graph:edges:* (batch)
+    else Redis Unavailable
+        Service->>Service: getFilteredGraphMemory()
+        Service->>Service: Filter from in-memory cache
+    end
     Service->>Service: buildGraphResponse()
     Service->>Controller: GraphResponse (3D format)
     Controller->>Frontend: JSON response
@@ -220,6 +244,7 @@ private async explorePathsRecursive(
 1. **startsWithPublic**: Paths from publicly exposed services
 2. **endsInSink**: Paths ending in data stores (RDS, SQS)
 3. **hasVulnerability**: Paths passing through vulnerable services
+4. **metadataFilters**: Generic filtering by any metadata key-value pair
 
 ### Filter Composition
 ```typescript
@@ -227,16 +252,38 @@ private async explorePathsRecursive(
 GET /api/graph/query?startsWithPublic=true&endsInSink=true&hasVulnerability=true
 ```
 
-### Custom Filters
+### Metadata Filters (Generic & Secure)
 ```typescript
-POST /api/graph/query/custom
-{
-    "customFilters": [
-        "route => route.path.length > 3",
-        "route => route.path.includes('auth-service')"
-    ]
-}
+// Filter by any metadata attribute
+GET /api/graph/query?metadataFilters={"cloud":"AWS"}
+GET /api/graph/query?metadataFilters={"engine":"postgres"}
+GET /api/graph/query?metadataFilters={"cwe":"CWE-22"}
+
+// Works for:
+// - Top-level node metadata (cloud, engine, version)
+// - Nested vulnerability metadata (cwe, severity)
+// - Any custom metadata added to nodes
 ```
+
+### How Metadata Filters Work
+
+```mermaid
+flowchart LR
+    A[Load Graph] --> B[Index Metadata]
+    B --> C[graph:nodes:meta:cloud:AWS]
+    B --> D[graph:nodes:meta:engine:postgres]
+    B --> E[graph:nodes:meta:cwe:CWE-22]
+    
+    F[Query Request] --> G[Lookup Metadata Set]
+    G --> H[Compute Reachability]
+    H --> I[Return Subgraph]
+    
+    C -.-> G
+    D -.-> G
+    E -.-> G
+```
+
+**Security Note**: The previous `customFilters` feature (which used `new Function()`) has been removed due to RCE vulnerability. Metadata filters provide the same flexibility without security risks.
 
 ## 🎨 Frontend Integration
 
@@ -305,8 +352,7 @@ const GraphViewer = ({ apiUrl, filter }) => {
 |--------|----------|---------|-------------|
 | POST | `/api/graph/load` | Load graph data | O(n + e) initial, then O(1) |
 | POST | `/api/graph/upload` | File upload | Same as load |
-| GET | `/api/graph/query` | Filter query | O(1) lookup |
-| POST | `/api/graph/query/custom` | Custom filters | O(1) + filter time |
+| GET | `/api/graph/query` | Filter query (with metadata) | O(1) lookup via Redis SUNION |
 | GET | `/api/graph/statistics` | Graph stats | O(1) |
 
 ### Response Formats
@@ -337,13 +383,45 @@ All responses optimized for 3D Force Graph consumption:
 - **Flexible Filtering**: Multiple filter types and combinations
 - **Extensibility**: Custom filter support for advanced queries
 
+## ✅ Redis Integration (Implemented)
+
+### Architecture Benefits
+- **Scalability**: Distributed graph storage for large datasets
+- **Performance**: O(1) lookups via Redis Sets and Hashes
+- **Persistence**: Data survives server restarts
+- **Reachability Cache**: Pre-computed paths stored in Redis Sets
+- **Metadata Indexing**: Dynamic metadata filtering without code changes
+
+### Redis Data Model
+
+```
+graph:node:{name}              → Hash (node data)
+graph:nodes:all                → Set (all node names)
+graph:nodes:{kind}             → Set (nodes by type)
+graph:nodes:public             → Set (public nodes)
+graph:nodes:vulnerable         → Set (vulnerable nodes)
+graph:edges:{from}             → Set (outgoing edges)
+graph:reverse:{to}             → Set (incoming edges)
+graph:reachable:public:{node}  → Set (nodes reachable from public)
+graph:reachable:sink:{node}    → Set (nodes reachable to sink)
+graph:reachable:vulnerable:{node} → Set (nodes reachable through vuln)
+graph:reachable:meta:{key}:{value}:{node} → Set (metadata reachability)
+graph:nodes:meta:{key}:{value} → Set (nodes with metadata)
+graph:meta:keys                → Set (all metadata key:value pairs)
+```
+
+### Fallback Strategy
+- **Graceful Degradation**: Automatically falls back to in-memory storage if Redis is unavailable
+- **Transparent to Client**: Same API regardless of storage backend
+- **Startup Detection**: Checks Redis connection on module initialization
+
 ## 🔮 Future Enhancements
 
 1. **Real-time Updates**: WebSocket support for live graph changes
 2. **Advanced Analytics**: Graph metrics and centrality analysis
 3. **Export Features**: PDF/PNG export of visualizations
 4. **Authentication**: User management and access control
-5. **Caching Layer**: Redis integration for distributed deployments
+5. **Redis Clustering**: Multi-node Redis setup for high availability
 
 ## 📚 Technology Stack Summary
 
