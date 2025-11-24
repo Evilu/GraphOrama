@@ -33,8 +33,7 @@ export default function GraphViewer({ apiUrl, setApiUrl, filter, uploadStamp }: 
           if (filter === 'hasVulnerability') params.hasVulnerability = true
 
           const res2 = await axios.get(alt, { params })
-          // update controls API URL to the working endpoint so future requests use it
-          // update parent state if callback provided so UI reflects the working URL
+
           if (setApiUrl) setApiUrl(alt)
           return res2.data
         } catch (err2: any) {

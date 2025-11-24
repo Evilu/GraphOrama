@@ -23,7 +23,7 @@ import { GraphDataDto } from './dto/graph-data.dto';
 @ApiTags('graph')
 @Controller('api/graph')
 export class GraphController {
-    constructor(private readonly graphService: GraphService) {}
+    constructor(private readonly graphService: GraphService) { }
 
     /**
      * Load graph data from JSON
@@ -89,56 +89,13 @@ export class GraphController {
             startsWithPublic: filters.startsWithPublic || false,
             endsInSink: filters.endsInSink || false,
             hasVulnerability: filters.hasVulnerability || false,
+            metadataFilters: filters.metadataFilters,
         };
 
         return await this.graphService.getFilteredGraph(filterOptions);
     }
 
-    /**
-     * Get graph with custom filters
-     */
-    @Post('query/custom')
-    @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: 'Query graph with custom filters' })
-    @ApiBody({
-        description: 'Custom filter options',
-        schema: {
-            type: 'object',
-            properties: {
-                startsWithPublic: { type: 'boolean' },
-                endsInSink: { type: 'boolean' },
-                hasVulnerability: { type: 'boolean' },
-                customFilters: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    description: 'Array of custom filter function strings'
-                }
-            }
-        }
-    })
-    @ApiResponse({
-        status: 200,
-        description: 'Filtered graph data with custom filters applied'
-    })
-    async queryGraphWithCustomFilters(
-        @Body() body: any
-    ): Promise<GraphResponse> {
-        const filterOptions: FilterOptions = {
-            startsWithPublic: body.startsWithPublic,
-            endsInSink: body.endsInSink,
-            hasVulnerability: body.hasVulnerability,
-        };
 
-        // Parse custom filter functions if provided
-        if (body.customFilters && Array.isArray(body.customFilters)) {
-            filterOptions.customFilters = body.customFilters.map((filterStr: string) => {
-                // Safe evaluation of filter functions
-                return new Function('route', `return ${filterStr}`) as (route: any) => boolean;
-            });
-        }
-
-        return await this.graphService.getFilteredGraph(filterOptions);
-    }
 
     /**
      * Get graph statistics

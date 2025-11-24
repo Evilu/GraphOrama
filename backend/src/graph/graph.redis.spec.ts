@@ -171,9 +171,9 @@ describe('GraphService with Redis', () => {
       nodes: [
         { name: 'api-gateway', kind: 'service', publicExposed: true },
         { name: 'auth-service', kind: 'service', publicExposed: false },
-        { name: 'user-service', kind: 'service', publicExposed: false, vulnerabilities: [{ file: 'auth.js', severity: 'critical', message: 'SQL injection', metadata: {} }] },
+        { name: 'user-service', kind: 'service', publicExposed: false, vulnerabilities: [{ file: 'auth.js', severity: 'critical', message: 'SQL injection', metadata: { cwe: 'CWE-89' } }] },
         { name: 'order-service', kind: 'service', publicExposed: false },
-        { name: 'postgres', kind: 'rds' },
+        { name: 'postgres', kind: 'rds', metadata: { cloud: 'AWS' } },
         { name: 'redis-cache', kind: 'cache' },
       ],
       edges: [
@@ -197,6 +197,17 @@ describe('GraphService with Redis', () => {
       expect(result.nodes.map(n => n.id)).toContain('api-gateway');
     });
 
+    it('should filter by vulnerability metadata (nested)', async () => {
+      const result = await service.getFilteredGraph({
+        metadataFilters: { cwe: 'CWE-89' }
+      });
+
+      expect(result).toBeDefined();
+      expect(result.nodes.length).toBeGreaterThan(0);
+      const userService = result.nodes.find(n => n.id === 'user-service');
+      expect(userService).toBeDefined();
+    });
+
     test('finds vulnerable paths correctly', async () => {
       await service.loadGraph(complexData as any);
 
@@ -215,6 +226,36 @@ describe('GraphService with Redis', () => {
 
       // Should include public paths that go through vulnerable nodes
       expect(result.nodes.length).toBeGreaterThan(0);
+    });
+    it('should filter by metadata', async () => {
+      // Filter for nodes with cloud=AWS
+      const result = await service.getFilteredGraph({
+        metadataFilters: { cloud: 'AWS' }
+      });
+
+      expect(result).toBeDefined();
+      expect(result.nodes.length).toBeGreaterThan(0);
+
+      // Verify all returned nodes (or at least the ones that match) have the metadata
+      // Note: The filter returns paths reachable from/to matching nodes, so not ALL nodes in the result
+      // necessarily have the metadata (they might be neighbors). 
+      // But for this specific graph structure and logic, let's check if we get the expected nodes.
+
+      const awsNodes = result.nodes.filter(n => n.metadata && n.metadata.cloud === 'AWS');
+      expect(awsNodes.length).toBeGreaterThan(0);
+
+      // Check specific known AWS node
+      const postgres = result.nodes.find(n => n.id === 'postgres');
+      expect(postgres).toBeDefined();
+    });
+
+    it('should return empty result for non-matching filter', async () => {
+      const result = await service.getFilteredGraph({
+        metadataFilters: { environment: 'non-existent' }
+      });
+
+      expect(result).toBeDefined();
+      expect(result.nodes.length).toBe(0);
     });
   });
 });

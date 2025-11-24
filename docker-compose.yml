@@ -7,7 +7,6 @@ services:
     hostname: redis
     networks:
       - internal
-    # Redis is internal; frontend/backend connect to it by hostname `redis`
     volumes:
       - redis-data:/data
     restart: unless-stopped
@@ -30,7 +29,6 @@ services:
     ports:
       - "3001:3001"
     restart: unless-stopped
-    # Do not publish backend port to host; keep internal so frontend can talk to it at http://backend:3001
 
   frontend:
     build:

@@ -4,7 +4,7 @@ export interface FilterOptions {
     startsWithPublic?: boolean;
     endsInSink?: boolean;
     hasVulnerability?: boolean;
-    customFilters?: Array<(route: Route) => boolean>;
+    metadataFilters?: Record<string, string>;
 }
 
 export interface GraphResponse {

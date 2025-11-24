@@ -9,7 +9,7 @@ export class GraphService implements OnModuleInit {
     private redis: Redis | null = null;
     private useRedis: boolean = true;
 
-    // Fallback in-memory storage when Redis is unavailable
+
     private nodes: Map<string, ServiceNode> = new Map();
     private adjacencyList: Map<string, Set<string>> = new Map();
     private reverseAdjacencyList: Map<string, Set<string>> = new Map();
@@ -21,7 +21,7 @@ export class GraphService implements OnModuleInit {
     private sinkPaths: Map<string, Route[]> = new Map();
     private vulnerablePaths: Map<string, Route[]> = new Map();
 
-    constructor(private readonly redisService: RedisService) {}
+    constructor(private readonly redisService: RedisService) { }
 
     async onModuleInit() {
         this.useRedis = await this.redisService.isAvailable();
@@ -68,15 +68,15 @@ export class GraphService implements OnModuleInit {
     private async loadGraphRedis(data: GraphData): Promise<void> {
         const pipeline = this.redis!.pipeline();
 
-        // Clear existing data
+
         const keys = await this.redis!.keys('graph:*');
         if (keys.length > 0) {
             pipeline.del(...keys);
         }
 
-        // Store nodes by type using Redis Sets
+
         data.nodes.forEach(node => {
-            // Store full node data as hash
+
             pipeline.hset(`graph:node:${node.name}`, {
                 name: node.name,
                 kind: node.kind,
@@ -87,27 +87,54 @@ export class GraphService implements OnModuleInit {
                 metadata: JSON.stringify(node.metadata || {}),
             });
 
-            // Index by kind
+
             pipeline.sadd(`graph:nodes:${node.kind}`, node.name);
             pipeline.sadd('graph:nodes:all', node.name);
 
-            // Index special nodes
+
             if (node.publicExposed) {
                 pipeline.sadd('graph:nodes:public', node.name);
             }
             if (this.isSinkNode(node)) {
                 pipeline.sadd('graph:nodes:sinks', node.name);
             }
+            if (node.vulnerabilities && node.vulnerabilities.length > 0) {
+                pipeline.sadd('graph:nodes:vulnerable', node.name);
+            }
+
+
+
+            const indexMetadata = (meta: Record<string, any>) => {
+                if (!meta) return;
+                Object.entries(meta).forEach(([key, value]) => {
+                    pipeline.sadd(`graph:nodes:meta:${key}:${value}`, node.name);
+                    pipeline.sadd('graph:meta:keys', `${key}:${value}`);
+                });
+            };
+
+
+            if (node.metadata) {
+                indexMetadata(node.metadata);
+            }
+
+
+            if (node.vulnerabilities) {
+                node.vulnerabilities.forEach(vuln => {
+                    if (vuln.metadata) {
+                        indexMetadata(vuln.metadata);
+                    }
+                });
+            }
             if (node.vulnerabilities?.length > 0) {
                 pipeline.sadd('graph:nodes:vulnerable', node.name);
             }
         });
 
-        // Store edges using Redis Sets
+
         data.edges.forEach(edge => {
             const targets = Array.isArray(edge.to) ? edge.to : [edge.to];
             targets.forEach(target => {
-                // Forward edges
+
                 pipeline.sadd(`graph:edges:${edge.from}`, target);
                 // Reverse edges
                 pipeline.sadd(`graph:reverse:${target}`, edge.from);
@@ -158,6 +185,25 @@ export class GraphService implements OnModuleInit {
             const combined = new Set([...incoming, ...outgoing, vulnNode]);
             if (combined.size > 0) {
                 await this.redis!.sadd(`graph:reachable:vulnerable:${vulnNode}`, ...Array.from(combined));
+            }
+        }
+
+        // Get all metadata keys
+        const metaKeys = await this.redis!.smembers('graph:meta:keys');
+
+        // For each metadata key, compute paths through matching nodes
+        for (const metaKey of metaKeys) {
+            const metaNodes = await this.redis!.smembers(`graph:nodes:meta:${metaKey}`);
+
+            for (const node of metaNodes) {
+                // Treat metadata nodes like vulnerable nodes - we want context (paths through them)
+                const incoming = await this.bfsRedis(node, 'backward', 5);
+                const outgoing = await this.bfsRedis(node, 'forward', 5);
+                const combined = new Set([...incoming, ...outgoing, node]);
+
+                if (combined.size > 0) {
+                    await this.redis!.sadd(`graph:reachable:meta:${metaKey}:${node}`, ...Array.from(combined));
+                }
             }
         }
     }
@@ -429,10 +475,24 @@ export class GraphService implements OnModuleInit {
             vulnNodes.forEach(node => nodeKeys.push(`graph:reachable:vulnerable:${node}`));
         }
 
+        // Apply metadata filters
+        if (filters.metadataFilters) {
+            for (const [key, value] of Object.entries(filters.metadataFilters)) {
+                const metaNodes = await this.redis!.smembers(`graph:nodes:meta:${key}:${value}`);
+                metaNodes.forEach(node => nodeKeys.push(`graph:reachable:meta:${key}:${value}:${node}`));
+            }
+        }
+
         // Get union of all reachable nodes (automatic deduplication!)
         let nodeIds: string[];
-        if (nodeKeys.length > 0) {
-            nodeIds = await this.redis!.sunion(...nodeKeys);
+
+        if (this.hasActiveFilters(filters)) {
+            if (nodeKeys.length > 0) {
+                nodeIds = await this.redis!.sunion(...nodeKeys);
+            } else {
+                // Active filters but no matches found
+                nodeIds = [];
+            }
         } else {
             // No filters - return all nodes
             nodeIds = await this.redis!.smembers('graph:nodes:all');
@@ -537,11 +597,26 @@ export class GraphService implements OnModuleInit {
             });
         }
 
-        // Apply custom filters
-        let finalRoutes = Array.from(filteredRoutes);
-        if (filters.customFilters?.length > 0) {
-            finalRoutes = await this.applyCustomFiltersAsync(finalRoutes, filters.customFilters);
+        // Metadata filters for in-memory fallback
+        if (filters.metadataFilters) {
+            const metaFilters = filters.metadataFilters;
+            filteredRoutes.forEach(route => {
+                // Check if any node in the route has the metadata
+                const matches = route.path.some(nodeId => {
+                    const node = this.nodes.get(nodeId);
+                    if (!node || !node.metadata) return false;
+                    return Object.entries(metaFilters).every(([key, value]) =>
+                        node.metadata![key] === value
+                    );
+                });
+
+                if (!matches) {
+                    filteredRoutes.delete(route);
+                }
+            });
         }
+
+        let finalRoutes = Array.from(filteredRoutes);
 
         // If no filters, return all precomputed routes
         if (!this.hasActiveFilters(filters)) {
@@ -551,26 +626,6 @@ export class GraphService implements OnModuleInit {
         return this.buildGraphResponse(finalRoutes);
     }
 
-    /**
-     * Apply custom filters asynchronously
-     */
-    private async applyCustomFiltersAsync(
-        routes: Route[],
-        customFilters: Array<(route: Route) => boolean>
-    ): Promise<Route[]> {
-        const chunks = this.chunkArray(routes, 100);
-        const filteredChunks: Route[][] = [];
-
-        for (const chunk of chunks) {
-            const filteredChunk = chunk.filter(route =>
-                customFilters.every(filter => filter(route))
-            );
-            filteredChunks.push(filteredChunk);
-            await this.yieldToEventLoop();
-        }
-
-        return filteredChunks.flat();
-    }
 
     /**
      * Build graph response for 3D visualization
@@ -649,7 +704,7 @@ export class GraphService implements OnModuleInit {
 
     private hasActiveFilters(filters: FilterOptions): boolean {
         return filters.startsWithPublic || filters.endsInSink ||
-            filters.hasVulnerability || (filters.customFilters?.length > 0);
+            filters.hasVulnerability || !!filters.metadataFilters;
     }
 
     private getAllPrecomputedRoutes(): Route[] {

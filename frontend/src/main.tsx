@@ -14,4 +14,4 @@ createRoot(document.getElementById('root')!).render(
   </React.StrictMode>
 )
 
-// this file is no longer used in Next.js; keep as reference or delete
+

@@ -20,4 +20,18 @@ export class GraphFilterDto {
     @Transform(({ value }) => value === 'true' || value === true)
     @IsBoolean()
     hasVulnerability?: boolean;
+
+    @ApiPropertyOptional({
+        description: 'JSON string of metadata filters (e.g. {"cloud": "AWS"})',
+        type: 'string'
+    })
+    @IsOptional()
+    @Transform(({ value }) => {
+        try {
+            return typeof value === 'string' ? JSON.parse(value) : value;
+        } catch {
+            return {};
+        }
+    })
+    metadataFilters?: Record<string, string>;
 }
