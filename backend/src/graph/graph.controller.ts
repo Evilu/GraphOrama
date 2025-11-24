@@ -13,7 +13,7 @@ import {
     MaxFileSizeValidator,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { GraphService } from './graph.service';
 import { GraphData } from './interfaces/graph.interfaces';
 import { FilterOptions, GraphResponse } from './interfaces/filter.interfaces';
@@ -36,7 +36,7 @@ export class GraphController {
     @ApiResponse({ status: 400, description: 'Invalid graph data' })
     async loadGraph(@Body() graphData: GraphData): Promise<{ message: string; statistics: any }> {
         await this.graphService.loadGraph(graphData);
-        const statistics = this.graphService.getStatistics();
+        const statistics = await this.graphService.getStatistics();
 
         return {
             message: 'Graph loaded successfully',
@@ -66,7 +66,7 @@ export class GraphController {
     ): Promise<{ message: string; statistics: any }> {
         const graphData = JSON.parse(file.buffer.toString());
         await this.graphService.loadGraph(graphData);
-        const statistics = this.graphService.getStatistics();
+        const statistics = await this.graphService.getStatistics();
 
         return {
             message: 'Graph file processed successfully',
@@ -149,8 +149,8 @@ export class GraphController {
         status: 200,
         description: 'Graph statistics'
     })
-    getStatistics() {
-        return this.graphService.getStatistics();
+    async getStatistics() {
+        return await this.graphService.getStatistics();
     }
 
     /**

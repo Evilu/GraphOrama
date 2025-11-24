@@ -1,30 +1,37 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { GraphData, ServiceNode, Edge } from './interfaces/graph.interfaces';
 import { FilterOptions, GraphResponse, Route } from './interfaces/filter.interfaces';
+import { RedisService } from '../redis/redis.service';
+import Redis from 'ioredis';
 
 @Injectable()
 export class GraphService implements OnModuleInit {
-    // Core data structures for O(1) lookups
+    private redis: Redis | null = null;
+    private useRedis: boolean = true;
+
+    // Fallback in-memory storage when Redis is unavailable
     private nodes: Map<string, ServiceNode> = new Map();
     private adjacencyList: Map<string, Set<string>> = new Map();
     private reverseAdjacencyList: Map<string, Set<string>> = new Map();
-
-    // Indexed collections for O(1) filtering
     private publicNodes: Set<string> = new Set();
     private sinkNodes: Set<string> = new Set();
     private vulnerableNodes: Set<string> = new Set();
     private nodesByKind: Map<string, Set<string>> = new Map();
-
-    // Pre-computed paths for O(1) access
     private publicPaths: Map<string, Route[]> = new Map();
     private sinkPaths: Map<string, Route[]> = new Map();
     private vulnerablePaths: Map<string, Route[]> = new Map();
 
-    // Graph data storage
-    private graphData: GraphData | null = null;
+    constructor(private readonly redisService: RedisService) {}
 
-    onModuleInit() {
-        this.initializeEmptyGraph();
+    async onModuleInit() {
+        this.useRedis = await this.redisService.isAvailable();
+        if (this.useRedis) {
+            this.redis = this.redisService.getClient();
+            console.log('GraphService: Using Redis for graph storage');
+        } else {
+            console.log('GraphService: Using in-memory storage (Redis unavailable)');
+            this.initializeEmptyGraph();
+        }
     }
 
     /**
@@ -44,14 +51,149 @@ export class GraphService implements OnModuleInit {
     }
 
     /**
-     * Load and process graph data asynchronously
-     * Uses async iterators to prevent blocking
+     * Load and process graph data
+     * Uses Redis for storage and pre-computation if available
      */
     public async loadGraph(data: GraphData): Promise<void> {
-        this.initializeEmptyGraph();
-        this.graphData = data;
+        if (this.useRedis && this.redis) {
+            await this.loadGraphRedis(data);
+        } else {
+            await this.loadGraphMemory(data);
+        }
+    }
 
-        // Process in chunks to avoid blocking
+    /**
+     * Load graph using Redis - simplified implementation
+     */
+    private async loadGraphRedis(data: GraphData): Promise<void> {
+        const pipeline = this.redis!.pipeline();
+
+        // Clear existing data
+        const keys = await this.redis!.keys('graph:*');
+        if (keys.length > 0) {
+            pipeline.del(...keys);
+        }
+
+        // Store nodes by type using Redis Sets
+        data.nodes.forEach(node => {
+            // Store full node data as hash
+            pipeline.hset(`graph:node:${node.name}`, {
+                name: node.name,
+                kind: node.kind,
+                language: node.language || '',
+                path: node.path || '',
+                publicExposed: node.publicExposed ? '1' : '0',
+                vulnerabilities: JSON.stringify(node.vulnerabilities || []),
+                metadata: JSON.stringify(node.metadata || {}),
+            });
+
+            // Index by kind
+            pipeline.sadd(`graph:nodes:${node.kind}`, node.name);
+            pipeline.sadd('graph:nodes:all', node.name);
+
+            // Index special nodes
+            if (node.publicExposed) {
+                pipeline.sadd('graph:nodes:public', node.name);
+            }
+            if (this.isSinkNode(node)) {
+                pipeline.sadd('graph:nodes:sinks', node.name);
+            }
+            if (node.vulnerabilities?.length > 0) {
+                pipeline.sadd('graph:nodes:vulnerable', node.name);
+            }
+        });
+
+        // Store edges using Redis Sets
+        data.edges.forEach(edge => {
+            const targets = Array.isArray(edge.to) ? edge.to : [edge.to];
+            targets.forEach(target => {
+                // Forward edges
+                pipeline.sadd(`graph:edges:${edge.from}`, target);
+                // Reverse edges
+                pipeline.sadd(`graph:reverse:${target}`, edge.from);
+                // All edges list
+                pipeline.sadd('graph:edges:all', `${edge.from}->${target}`);
+            });
+        });
+
+        await pipeline.exec();
+
+        // Pre-compute reachable sets (simplified - no complex recursion!)
+        await this.computeReachableSetsRedis();
+    }
+
+    /**
+     * Compute reachable sets in Redis - much simpler than recursive approach
+     */
+    private async computeReachableSetsRedis(): Promise<void> {
+        // Get all public nodes
+        const publicNodes = await this.redis!.smembers('graph:nodes:public');
+
+        // For each public node, compute reachable nodes using BFS
+        for (const publicNode of publicNodes) {
+            const reachable = await this.bfsRedis(publicNode, 'forward');
+            if (reachable.size > 0) {
+                await this.redis!.sadd(`graph:reachable:public:${publicNode}`, ...Array.from(reachable));
+            }
+        }
+
+        // Get all sink nodes
+        const sinkNodes = await this.redis!.smembers('graph:nodes:sinks');
+
+        // For each sink, compute nodes that can reach it
+        for (const sinkNode of sinkNodes) {
+            const reachable = await this.bfsRedis(sinkNode, 'backward');
+            if (reachable.size > 0) {
+                await this.redis!.sadd(`graph:reachable:sink:${sinkNode}`, ...Array.from(reachable));
+            }
+        }
+
+        // Get all vulnerable nodes
+        const vulnerableNodes = await this.redis!.smembers('graph:nodes:vulnerable');
+
+        // For each vulnerable node, compute paths through it
+        for (const vulnNode of vulnerableNodes) {
+            const incoming = await this.bfsRedis(vulnNode, 'backward', 5);
+            const outgoing = await this.bfsRedis(vulnNode, 'forward', 5);
+            const combined = new Set([...incoming, ...outgoing, vulnNode]);
+            if (combined.size > 0) {
+                await this.redis!.sadd(`graph:reachable:vulnerable:${vulnNode}`, ...Array.from(combined));
+            }
+        }
+    }
+
+    /**
+     * Simple BFS using Redis - no complex recursion!
+     */
+    private async bfsRedis(startNode: string, direction: 'forward' | 'backward', maxDepth: number = 10): Promise<Set<string>> {
+        const visited = new Set<string>([startNode]);
+        const queue = [{ node: startNode, depth: 0 }];
+
+        while (queue.length > 0) {
+            const { node, depth } = queue.shift()!;
+
+            if (depth >= maxDepth) continue;
+
+            const neighbors = direction === 'forward'
+                ? await this.redis!.smembers(`graph:edges:${node}`)
+                : await this.redis!.smembers(`graph:reverse:${node}`);
+
+            for (const neighbor of neighbors) {
+                if (!visited.has(neighbor)) {
+                    visited.add(neighbor);
+                    queue.push({ node: neighbor, depth: depth + 1 });
+                }
+            }
+        }
+
+        return visited;
+    }
+
+    /**
+     * Fallback: Load graph in memory when Redis unavailable
+     */
+    private async loadGraphMemory(data: GraphData): Promise<void> {
+        this.initializeEmptyGraph();
         await this.preprocessGraphAsync(data);
         await this.precomputePathsAsync();
     }
@@ -255,9 +397,113 @@ export class GraphService implements OnModuleInit {
     }
 
     /**
-     * Get filtered graph - O(1) lookup from precomputed paths
+     * Get filtered graph - O(1) with Redis SUNION!
      */
     public async getFilteredGraph(filters: FilterOptions): Promise<GraphResponse> {
+        if (this.useRedis && this.redis) {
+            return await this.getFilteredGraphRedis(filters);
+        } else {
+            return await this.getFilteredGraphMemory(filters);
+        }
+    }
+
+    /**
+     * Redis-based filtering - MUCH simpler!
+     */
+    private async getFilteredGraphRedis(filters: FilterOptions): Promise<GraphResponse> {
+        const nodeKeys: string[] = [];
+
+        // Build keys for SUNION based on filters
+        if (filters.startsWithPublic) {
+            const publicNodes = await this.redis!.smembers('graph:nodes:public');
+            publicNodes.forEach(node => nodeKeys.push(`graph:reachable:public:${node}`));
+        }
+
+        if (filters.endsInSink) {
+            const sinkNodes = await this.redis!.smembers('graph:nodes:sinks');
+            sinkNodes.forEach(node => nodeKeys.push(`graph:reachable:sink:${node}`));
+        }
+
+        if (filters.hasVulnerability) {
+            const vulnNodes = await this.redis!.smembers('graph:nodes:vulnerable');
+            vulnNodes.forEach(node => nodeKeys.push(`graph:reachable:vulnerable:${node}`));
+        }
+
+        // Get union of all reachable nodes (automatic deduplication!)
+        let nodeIds: string[];
+        if (nodeKeys.length > 0) {
+            nodeIds = await this.redis!.sunion(...nodeKeys);
+        } else {
+            // No filters - return all nodes
+            nodeIds = await this.redis!.smembers('graph:nodes:all');
+        }
+
+        // Build response from Redis data
+        return await this.buildGraphResponseRedis(nodeIds);
+    }
+
+    /**
+     * Build graph response from Redis data
+     */
+    private async buildGraphResponseRedis(nodeIds: string[]): Promise<GraphResponse> {
+        const nodes = new Set(nodeIds);
+        const edges = new Map<string, Set<string>>();
+
+        // Get edges for included nodes
+        for (const nodeId of nodeIds) {
+            const targets = await this.redis!.smembers(`graph:edges:${nodeId}`);
+            targets.forEach(target => {
+                if (nodes.has(target)) {
+                    if (!edges.has(nodeId)) {
+                        edges.set(nodeId, new Set());
+                    }
+                    edges.get(nodeId)!.add(target);
+                }
+            });
+        }
+
+        // Fetch node data from Redis
+        const graphNodes = await Promise.all(
+            Array.from(nodes).map(async (nodeId) => {
+                const nodeData = await this.redis!.hgetall(`graph:node:${nodeId}`);
+                return {
+                    id: nodeId,
+                    name: nodeId,
+                    group: nodeData.kind || 'unknown',
+                    isPublic: nodeData.publicExposed === '1',
+                    isSink: await this.redis!.sismember('graph:nodes:sinks', nodeId) === 1,
+                    hasVulnerability: await this.redis!.sismember('graph:nodes:vulnerable', nodeId) === 1,
+                    vulnerabilities: JSON.parse(nodeData.vulnerabilities || '[]'),
+                    metadata: JSON.parse(nodeData.metadata || '{}'),
+                };
+            })
+        );
+
+        const graphLinks = Array.from(edges.entries()).flatMap(([source, targets]) =>
+            Array.from(targets).map(target => ({
+                source,
+                target,
+                value: 1
+            }))
+        );
+
+        return {
+            nodes: graphNodes,
+            links: graphLinks,
+            metadata: {
+                totalNodes: graphNodes.length,
+                totalEdges: graphLinks.length,
+                publicNodes: graphNodes.filter(n => n.isPublic).length,
+                sinkNodes: graphNodes.filter(n => n.isSink).length,
+                vulnerableNodes: graphNodes.filter(n => n.hasVulnerability).length
+            }
+        };
+    }
+
+    /**
+     * Fallback: In-memory filtering
+     */
+    private async getFilteredGraphMemory(filters: FilterOptions): Promise<GraphResponse> {
         const filteredRoutes = new Set<Route>();
 
         // O(1) lookups from precomputed maps
@@ -430,6 +676,35 @@ export class GraphService implements OnModuleInit {
      * Get graph statistics - O(1) operations
      */
     public getStatistics() {
+        if (this.useRedis && this.redis) {
+            return this.getStatisticsRedis();
+        } else {
+            return this.getStatisticsMemory();
+        }
+    }
+
+    private async getStatisticsRedis() {
+        const [totalNodes, publicNodes, sinkNodes, vulnerableNodes] = await Promise.all([
+            this.redis!.scard('graph:nodes:all'),
+            this.redis!.scard('graph:nodes:public'),
+            this.redis!.scard('graph:nodes:sinks'),
+            this.redis!.scard('graph:nodes:vulnerable'),
+        ]);
+
+        const allEdges = await this.redis!.smembers('graph:edges:all');
+
+        return {
+            totalNodes,
+            totalEdges: allEdges.length,
+            publicNodes,
+            sinkNodes,
+            vulnerableNodes,
+            nodesByKind: {},
+            storageType: 'redis' as const,
+        };
+    }
+
+    private getStatisticsMemory() {
         return {
             totalNodes: this.nodes.size,
             totalEdges: Array.from(this.adjacencyList.values())
@@ -440,7 +715,8 @@ export class GraphService implements OnModuleInit {
             ),
             publicNodes: this.publicNodes.size,
             sinkNodes: this.sinkNodes.size,
-            vulnerableNodes: this.vulnerableNodes.size
+            vulnerableNodes: this.vulnerableNodes.size,
+            storageType: 'memory' as const,
         };
     }
 }
