@@ -367,15 +367,6 @@ All services communicate over an internal Docker bridge network named `internal`
 - [Backend API](backend.md) - Backend implementation details
 - [Swagger UI](http://localhost:3001/api) - Interactive API documentation
 
-## 🤝 Contributing
-
-This is a production-ready implementation with:
-
-- ✅ Comprehensive test coverage
-- ✅ Security best practices
-- ✅ Performance optimizations
-- ✅ Complete documentation
-
 ## 📝 License
 
 MIT
