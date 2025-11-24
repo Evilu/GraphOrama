@@ -19,17 +19,17 @@ Based on the provided assignment instructions, this system implements:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                 NestJS Backend                   │
+│                 NestJS Backend                  │
 ├─────────────────────────────────────────────────┤
-│  ┌─────────────────┐    ┌─────────────────────┐  │
-│  │ GraphController │───▶│   GraphService      │  │
-│  │                 │    │                     │  │
-│  │ • POST /load    │    │ • O(1) Lookups     │  │
-│  │ • POST /upload  │    │ • Pre-computed      │  │
-│  │ • GET /query    │    │   Paths             │  │
-│  │ • GET /stats    │    │ • Non-blocking      │  │
-│  └─────────────────┘    │   Operations        │  │
-│                         └──────────┬────────────┘  │
+│  ┌─────────────────┐    ┌─────────────────────┐ │
+│  │ GraphController │───▶│   GraphService      │ │
+│  │                 │    │                     │ │
+│  │ • POST /load    │    │ • O(1) Lookups      │ │
+│  │ • POST /upload  │    │ • Pre-computed      │ │
+│  │ • GET /query    │    │   Paths             │ │
+│  │ • GET /stats    │    │ • Non-blocking      │ │
+│  └─────────────────┘    │   Operations        │ │
+│                         └──────────┬────────────┘  
 ├────────────────────────────────────┼──────────────┤
 │               Storage Layer        │              │
 │  ┌─────────────────────────────────▼────────────┐ │
@@ -41,31 +41,32 @@ Based on the provided assignment instructions, this system implements:
 │  │  • O(1) lookups via SUNION                   │ │
 │  └──────────────────────────────────────────────┘ │
 │  ┌──────────────────────────────────────────────┐ │
-│  │      In-Memory Fallback (when Redis down)   │ │
+│  │      In-Memory Fallback (when Redis down)    │ │
 │  │  • Maps for nodes/edges                      │ │
 │  │  • Sets for indexes                          │ │
 │  └──────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────┘
+│                                                   │ 
+└───────────────────────────────────────────────────┘
 ```
 
 ### Frontend Architecture (React + TypeScript)
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                React Frontend                    │
+│                React Frontend                   │
 ├─────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────────────────┐  │
-│  │    App      │───▶│     GraphViewer         │  │
-│  │ Component   │    │                         │  │
-│  └─────────────┘    │ • 3D Force Graph        │  │
-│         │            │ • Real-time Updates     │  │
-│  ┌─────────────┐    │ • Interactive Controls │  │
-│  │   Controls  │    └─────────────────────────┘  │
-│  │             │                                 │
-│  │ • Filters   │                                 │
-│  │ • Upload    │                                 │
-│  │ • Config    │                                 │
-│  └─────────────┘                                 │
+│  ┌─────────────┐    ┌─────────────────────────┐ │
+│  │    App      │───▶│     GraphViewer         │ │
+│  │ Component   │    │                         │ │
+│  └─────────────┘    │ • 3D Force Graph        │ │
+│         │            │ • Real-time Updates    │ │
+│  ┌─────────────┐    │ • Interactive Controls  │ │
+│  │   Controls  │    └─────────────────────────┘ │
+│  │             │                                │
+│  │ • Filters   │                                │
+│  │ • Upload    │                                │
+│  │ • Config    │                                │
+│  └─────────────┘                                │
 └─────────────────────────────────────────────────┘
 ```
 
